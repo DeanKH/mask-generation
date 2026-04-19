@@ -1,0 +1,8 @@
+services:
+  maskgen:
+    build: .
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - .:/workspace
+    command: ["/workspace/model/bun_zipper_res4.ply", "-o", "/workspace/output.png"]
