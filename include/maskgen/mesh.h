@@ -25,6 +25,7 @@ class Mesh {
  private:
   bool LoadFromPly(const std::string& path);
   bool LoadFromObj(const std::string& path);
+  bool LoadFromStep(const std::string& path);
 
   std::vector<float> vertices_;
   std::vector<uint32_t> indices_;

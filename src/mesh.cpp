@@ -1,9 +1,26 @@
 #include <maskgen/mesh.h>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
+
+#include <BRep_Tool.hxx>
+#include <BRepMesh_IncrementalMesh.hxx>
+#include <Bnd_Box.hxx>
+#include <IFSelect_ReturnStatus.hxx>
+#include <Poly_Array1OfTriangle.hxx>
+#include <Poly_Triangulation.hxx>
+#include <STEPControl_Reader.hxx>
+#include <TColgp_Array1OfPnt.hxx>
+#include <TopAbs_ShapeEnum.hxx>
+#include <TopExp_Explorer.hxx>
+#include <TopLoc_Location.hxx>
+#include <TopoDS_Face.hxx>
+#include <TopoDS_Shape.hxx>
+#include <TopoDS_Vertex.hxx>
+#include <gp_Pnt.hxx>
 
 namespace maskgen {
 
@@ -23,6 +40,12 @@ bool Mesh::LoadFromFile(const std::string& path) {
   }
   if (path.size() >= 4 && path.substr(path.size() - 4) == ".obj") {
     return LoadFromObj(path);
+  }
+  if (path.size() >= 5 && path.substr(path.size() - 5) == ".step") {
+    return LoadFromStep(path);
+  }
+  if (path.size() >= 4 && path.substr(path.size() - 4) == ".stp") {
+    return LoadFromStep(path);
   }
   return false;
 }
@@ -136,6 +159,98 @@ bool Mesh::LoadFromObj(const std::string& path) {
         indices_.push_back(face_indices[j + 1]);
       }
     }
+  }
+
+  return !empty();
+}
+
+bool Mesh::LoadFromStep(const std::string& path) {
+  STEPControl_Reader reader;
+  IFSelect_ReturnStatus status = reader.ReadFile(path.c_str());
+  if (status != IFSelect_RetDone) {
+    return false;
+  }
+
+  if (reader.TransferRoots() == 0) {
+    return false;
+  }
+
+  TopoDS_Shape shape = reader.OneShape();
+  if (shape.IsNull()) {
+    return false;
+  }
+
+  Bnd_Box bbox;
+  for (TopExp_Explorer exp(shape, TopAbs_VERTEX); exp.More(); exp.Next()) {
+    bbox.Add(BRep_Tool::Pnt(TopoDS::Vertex(exp.Current())));
+  }
+  double deflection = 0.1;
+  if (!bbox.IsVoid()) {
+    Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+    bbox.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    double diag = std::sqrt((xmax - xmin) * (xmax - xmin) +
+                            (ymax - ymin) * (ymax - ymin) +
+                            (zmax - zmin) * (zmax - zmin));
+    if (diag > 0) {
+      deflection = diag * 0.001;
+    }
+  }
+
+  BRepMesh_IncrementalMesh mesher(shape, deflection);
+  mesher.Perform();
+  if (!mesher.IsDone()) {
+    return false;
+  }
+
+  vertices_.clear();
+  indices_.clear();
+
+  uint32_t vertex_offset = 0;
+
+  for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next()) {
+    const TopoDS_Face& face = TopoDS::Face(exp.Current());
+    TopLoc_Location loc;
+    Handle(Poly_Triangulation) tri = BRep_Tool::Triangulation(face, loc);
+    if (tri.IsNull()) {
+      continue;
+    }
+
+    const TColgp_Array1OfPnt& nodes = tri->Nodes();
+    const Poly_Array1OfTriangle& triangles = tri->Triangles();
+    const gp_Trsf& trsf = loc.Transformation();
+
+    int node_count = nodes.Upper() - nodes.Lower() + 1;
+    vertices_.reserve(vertices_.size() + node_count * 3);
+
+    for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
+      gp_Pnt p = nodes(i).Transformed(trsf);
+      vertices_.push_back(static_cast<float>(p.X()));
+      vertices_.push_back(static_cast<float>(p.Y()));
+      vertices_.push_back(static_cast<float>(p.Z()));
+    }
+
+    bool forward = face.Orientation() == TopAbs_FORWARD;
+    indices_.reserve(indices_.size() +
+                     (triangles.Upper() - triangles.Lower() + 1) * 3);
+
+    for (int i = triangles.Lower(); i <= triangles.Upper(); ++i) {
+      Standard_Integer n1, n2, n3;
+      triangles(i).Get(n1, n2, n3);
+      n1 -= nodes.Lower();
+      n2 -= nodes.Lower();
+      n3 -= nodes.Lower();
+      if (forward) {
+        indices_.push_back(vertex_offset + n1);
+        indices_.push_back(vertex_offset + n2);
+        indices_.push_back(vertex_offset + n3);
+      } else {
+        indices_.push_back(vertex_offset + n1);
+        indices_.push_back(vertex_offset + n3);
+        indices_.push_back(vertex_offset + n2);
+      }
+    }
+
+    vertex_offset += static_cast<uint32_t>(node_count);
   }
 
   return !empty();

@@ -12,6 +12,7 @@
 
 static void PrintUsage(const char* program) {
   std::cerr << "Usage: " << program << " [OPTIONS] <mesh_file>\n\n"
+            << "Supported formats: PLY (.ply), OBJ (.obj), STEP (.step, .stp)\n\n"
             << "Options:\n"
             << "  -o, --output PATH      Output PNG path (default: mask.png)\n"
             << "  --width INT            Image width (default: 640)\n"

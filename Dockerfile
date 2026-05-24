@@ -15,6 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     glslang-tools \
     clang-format \
     clang-tidy \
+    libocct-foundation-dev \
+    libocct-modeling-data-dev \
+    libocct-modeling-algorithms-dev \
+    libocct-data-exchange-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src

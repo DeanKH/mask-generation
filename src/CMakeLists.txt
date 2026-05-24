@@ -10,6 +10,7 @@ target_include_directories(maskgen
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     PRIVATE
         ${PROJECT_SOURCE_DIR}/src
+        ${OpenCASCADE_INCLUDE_DIR}
 )
 
 target_link_libraries(maskgen
@@ -18,6 +19,7 @@ target_link_libraries(maskgen
         ${OpenCV_LIBS}
         glm::glm
         shaderc
+        ${OpenCASCADE_LIBRARIES}
 )
 
 set_target_properties(maskgen PROPERTIES

@@ -11,6 +11,29 @@ find_package(OpenCV REQUIRED)
 find_package(Vulkan REQUIRED)
 find_package(glm REQUIRED)
 
+find_path(OpenCASCADE_INCLUDE_DIR
+    NAMES Standard.hxx
+    PATH_SUFFIXES opencascade
+)
+
+if(NOT OpenCASCADE_INCLUDE_DIR)
+    message(FATAL_ERROR "OpenCASCADE headers not found. Install libocct-foundation-dev.")
+endif()
+
+set(_OCCT_LIBS
+    TKernel TKMath TKBRep TKGeomBase TKGeomAlgo TKTopAlgo
+    TKShHealing TKXSBase TKSTEPBase TKSTEP209 TKSTEP TKMesh
+)
+set(OpenCASCADE_LIBRARIES "")
+foreach(_lib ${_OCCT_LIBS})
+    find_library(OCCT_LIB_${_lib} ${_lib})
+    if(NOT OCCT_LIB_${_lib})
+        message(FATAL_ERROR "OpenCASCADE library ${_lib} not found")
+    endif()
+    list(APPEND OpenCASCADE_LIBRARIES ${OCCT_LIB_${_lib}})
+endforeach()
+message(STATUS "Found OpenCASCADE: ${OpenCASCADE_INCLUDE_DIR}")
+
 add_subdirectory(src)
 add_subdirectory(app)
 
