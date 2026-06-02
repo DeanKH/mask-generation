@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <stdexcept>
@@ -17,6 +18,7 @@
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp_Explorer.hxx>
 #include <TopLoc_Location.hxx>
+#include <TopoDS.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Vertex.hxx>
@@ -34,7 +36,7 @@ const std::vector<uint32_t>& Mesh::indices() const { return indices_; }
 
 bool Mesh::empty() const { return vertices_.empty() || indices_.empty(); }
 
-bool Mesh::LoadFromFile(const std::string& path) {
+bool Mesh::LoadFromFile(const std::string& path, float scale) {
   if (path.size() >= 4 && path.substr(path.size() - 4) == ".ply") {
     return LoadFromPly(path);
   }
@@ -42,10 +44,13 @@ bool Mesh::LoadFromFile(const std::string& path) {
     return LoadFromObj(path);
   }
   if (path.size() >= 5 && path.substr(path.size() - 5) == ".step") {
-    return LoadFromStep(path);
+    return LoadFromStep(path, scale);
   }
   if (path.size() >= 4 && path.substr(path.size() - 4) == ".stp") {
-    return LoadFromStep(path);
+    return LoadFromStep(path, scale);
+  }
+  if (path.size() >= 4 && path.substr(path.size() - 4) == ".stl") {
+    return LoadFromStl(path);
   }
   return false;
 }
@@ -164,7 +169,7 @@ bool Mesh::LoadFromObj(const std::string& path) {
   return !empty();
 }
 
-bool Mesh::LoadFromStep(const std::string& path) {
+bool Mesh::LoadFromStep(const std::string& path, float scale) {
   STEPControl_Reader reader;
   IFSelect_ReturnStatus status = reader.ReadFile(path.c_str());
   if (status != IFSelect_RetDone) {
@@ -215,30 +220,28 @@ bool Mesh::LoadFromStep(const std::string& path) {
       continue;
     }
 
-    const TColgp_Array1OfPnt& nodes = tri->Nodes();
-    const Poly_Array1OfTriangle& triangles = tri->Triangles();
     const gp_Trsf& trsf = loc.Transformation();
 
-    int node_count = nodes.Upper() - nodes.Lower() + 1;
-    vertices_.reserve(vertices_.size() + node_count * 3);
+    int nb_nodes = tri->NbNodes();
+    vertices_.reserve(vertices_.size() + nb_nodes * 3);
 
-    for (int i = nodes.Lower(); i <= nodes.Upper(); ++i) {
-      gp_Pnt p = nodes(i).Transformed(trsf);
-      vertices_.push_back(static_cast<float>(p.X()));
-      vertices_.push_back(static_cast<float>(p.Y()));
-      vertices_.push_back(static_cast<float>(p.Z()));
+    for (int i = 1; i <= nb_nodes; ++i) {
+      gp_Pnt p = tri->Node(i).Transformed(trsf);
+      vertices_.push_back(static_cast<float>(p.X() * scale));
+      vertices_.push_back(static_cast<float>(p.Y() * scale));
+      vertices_.push_back(static_cast<float>(p.Z() * scale));
     }
 
     bool forward = face.Orientation() == TopAbs_FORWARD;
-    indices_.reserve(indices_.size() +
-                     (triangles.Upper() - triangles.Lower() + 1) * 3);
+    int nb_triangles = tri->NbTriangles();
+    indices_.reserve(indices_.size() + nb_triangles * 3);
 
-    for (int i = triangles.Lower(); i <= triangles.Upper(); ++i) {
+    for (int i = 1; i <= nb_triangles; ++i) {
       Standard_Integer n1, n2, n3;
-      triangles(i).Get(n1, n2, n3);
-      n1 -= nodes.Lower();
-      n2 -= nodes.Lower();
-      n3 -= nodes.Lower();
+      tri->Triangle(i).Get(n1, n2, n3);
+      n1 -= 1;
+      n2 -= 1;
+      n3 -= 1;
       if (forward) {
         indices_.push_back(vertex_offset + n1);
         indices_.push_back(vertex_offset + n2);
@@ -250,7 +253,93 @@ bool Mesh::LoadFromStep(const std::string& path) {
       }
     }
 
-    vertex_offset += static_cast<uint32_t>(node_count);
+    vertex_offset += static_cast<uint32_t>(nb_nodes);
+  }
+
+  return !empty();
+}
+
+bool Mesh::LoadFromStl(const std::string& path) {
+  std::ifstream file(path, std::ios::binary);
+  if (!file.is_open()) {
+    return false;
+  }
+
+  file.seekg(0, std::ios::end);
+  auto file_size = file.tellg();
+  file.seekg(0, std::ios::beg);
+
+  char header[80];
+  if (!file.read(header, 80)) {
+    return false;
+  }
+
+  uint32_t num_triangles = 0;
+  if (!file.read(reinterpret_cast<char*>(&num_triangles), 4)) {
+    return false;
+  }
+
+  auto expected_size =
+      std::streamoff(84) + static_cast<std::streamoff>(num_triangles) * 50;
+  if (file_size == expected_size) {
+    vertices_.clear();
+    vertices_.reserve(num_triangles * 9);
+    indices_.clear();
+    indices_.reserve(num_triangles * 3);
+
+    for (uint32_t i = 0; i < num_triangles; ++i) {
+      float normal[3];
+      float v[3][3];
+      uint16_t attr;
+      file.read(reinterpret_cast<char*>(normal), 12);
+      file.read(reinterpret_cast<char*>(v), 36);
+      file.read(reinterpret_cast<char*>(&attr), 2);
+
+      uint32_t base = static_cast<uint32_t>(vertices_.size() / 3);
+      for (int j = 0; j < 3; ++j) {
+        vertices_.push_back(v[j][0]);
+        vertices_.push_back(v[j][1]);
+        vertices_.push_back(v[j][2]);
+      }
+      indices_.push_back(base);
+      indices_.push_back(base + 1);
+      indices_.push_back(base + 2);
+    }
+
+    return !empty();
+  }
+
+  file.close();
+  file.open(path);
+  if (!file.is_open()) {
+    return false;
+  }
+
+  vertices_.clear();
+  indices_.clear();
+
+  std::string line;
+  int vert_count = 0;
+
+  while (std::getline(file, line)) {
+    std::istringstream iss(line);
+    std::string token;
+    iss >> token;
+    if (token != "vertex") {
+      continue;
+    }
+    float x, y, z;
+    iss >> x >> y >> z;
+    vertices_.push_back(x);
+    vertices_.push_back(y);
+    vertices_.push_back(z);
+    ++vert_count;
+    if (vert_count % 3 == 0) {
+      uint32_t base = static_cast<uint32_t>(vertices_.size() / 3) - 3;
+      indices_.push_back(base);
+      indices_.push_back(base + 1);
+      indices_.push_back(base + 2);
+    }
   }
 
   return !empty();

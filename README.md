@@ -23,7 +23,8 @@ docker compose build
 docker compose run --rm maskgen /workspace/model/bun_zipper_res4.ply -o /workspace/output.png
 
 # カメラパラメータを指定して生成
-docker compose run --rm maskgen /workspace/model/bun_zipper_res4.ply \
+docker compose run --rm maskgen /workspace/model/pen.step \
+  --scale 0.001 \
   --eye 0 0.13 0.3 \
   --target 0 0.13 0 \
   --fx 800 --fy 800 \

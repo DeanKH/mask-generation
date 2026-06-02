@@ -12,7 +12,7 @@
 
 static void PrintUsage(const char* program) {
   std::cerr << "Usage: " << program << " [OPTIONS] <mesh_file>\n\n"
-            << "Supported formats: PLY (.ply), OBJ (.obj), STEP (.step, .stp)\n\n"
+            << "Supported formats: PLY (.ply), OBJ (.obj), STEP (.step, .stp), STL (.stl)\n\n"
             << "Options:\n"
             << "  -o, --output PATH      Output PNG path (default: mask.png)\n"
             << "  --width INT            Image width (default: 640)\n"
@@ -31,8 +31,9 @@ static void PrintUsage(const char* program) {
             << "  --mesh-tz FLOAT        Mesh translation z (default: 0)\n"
             << "  --mesh-rx FLOAT        Mesh rotation x in degrees (default: 0)\n"
             << "  --mesh-ry FLOAT        Mesh rotation y in degrees (default: 0)\n"
-            << "  --mesh-rz FLOAT        Mesh rotation z in degrees (default: 0)\n"
-            << "  -h, --help             Show this help\n";
+             << "  --mesh-rz FLOAT        Mesh rotation z in degrees (default: 0)\n"
+             << "  --scale FLOAT          Scale factor for STEP/STP (default: 1.0, use 0.001 for mm->m)\n"
+             << "  -h, --help             Show this help\n";
 }
 
 static bool ParseVector3(const std::vector<std::string>& args, size_t* index,
@@ -56,6 +57,7 @@ int main(int argc, char* argv[]) {
 
   std::string mesh_path;
   std::string output_path = "mask.png";
+  float mesh_scale = 1.0f;
   maskgen::CameraParams params;
   maskgen::MeshPose pose;
 
@@ -154,6 +156,12 @@ int main(int argc, char* argv[]) {
     } else if (arg == "--mesh-rz") {
       if (++i >= args.size()) return 1;
       pose.rz = std::stod(args[i]) * deg_to_rad;
+    } else if (arg == "--scale") {
+      if (++i >= args.size()) {
+        std::cerr << "Error: missing scale value\n";
+        return 1;
+      }
+      mesh_scale = std::stof(args[i]);
     } else if (arg[0] == '-') {
       std::cerr << "Error: unknown option: " << arg << "\n";
       return 1;
@@ -176,7 +184,7 @@ int main(int argc, char* argv[]) {
   }
 
   maskgen::Mesh mesh;
-  if (!mesh.LoadFromFile(mesh_path)) {
+  if (!mesh.LoadFromFile(mesh_path, mesh_scale)) {
     std::cerr << "Error: failed to load mesh: " << mesh_path << "\n";
     return 1;
   }
