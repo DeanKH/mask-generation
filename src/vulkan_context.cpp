@@ -54,6 +54,7 @@ VulkanContext::VulkanContext(int width, int height) : width_(width), height_(hei
 }
 
 VulkanContext::~VulkanContext() {
+  CleanupMeshBuffers();
   CleanupOffscreenResources();
 
   if (fence_ != VK_NULL_HANDLE) {
@@ -513,6 +514,78 @@ void VulkanContext::CreateFence() {
   }
 }
 
+cv::Mat VulkanContext::RgbaToMask(const void* rgba_data) {
+  cv::Mat mask(height_, width_, CV_8UC1);
+  auto* src = static_cast<const uint8_t*>(rgba_data);
+  for (int row = 0; row < height_; ++row) {
+    auto* dst_row = mask.ptr<uint8_t>(row);
+    for (int col = 0; col < width_; ++col) {
+      int idx = (row * width_ + col) * 4;
+      dst_row[col] = (src[idx] > 127) ? 255 : 0;
+    }
+  }
+  return mask;
+}
+
+void VulkanContext::UploadMesh(const float* vertices, size_t vertex_count,
+                               const uint32_t* indices, size_t index_count) {
+  CleanupMeshBuffers();
+
+  VkDeviceSize vertex_buffer_size = static_cast<VkDeviceSize>(vertex_count * 3) * sizeof(float);
+  VkDeviceSize index_buffer_size = static_cast<VkDeviceSize>(index_count) * sizeof(uint32_t);
+  VkDeviceSize image_size = static_cast<VkDeviceSize>(width_) * height_ * 4;
+
+  CreateBuffer(vertex_buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               &persistent_vertex_buffer_, &persistent_vertex_memory_);
+  CreateBuffer(index_buffer_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               &persistent_index_buffer_, &persistent_index_memory_);
+  CreateBuffer(image_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               &persistent_readback_buffer_, &persistent_readback_memory_);
+
+  void* data = nullptr;
+  vkMapMemory(device_, persistent_vertex_memory_, 0, vertex_buffer_size, 0, &data);
+  std::memcpy(data, vertices, static_cast<size_t>(vertex_buffer_size));
+  vkUnmapMemory(device_, persistent_vertex_memory_);
+
+  vkMapMemory(device_, persistent_index_memory_, 0, index_buffer_size, 0, &data);
+  std::memcpy(data, indices, static_cast<size_t>(index_buffer_size));
+  vkUnmapMemory(device_, persistent_index_memory_);
+
+  persistent_index_count_ = static_cast<uint32_t>(index_count);
+  has_persistent_mesh_ = true;
+}
+
+void VulkanContext::CleanupMeshBuffers() {
+  if (persistent_vertex_buffer_ != VK_NULL_HANDLE) {
+    vkDestroyBuffer(device_, persistent_vertex_buffer_, nullptr);
+    persistent_vertex_buffer_ = VK_NULL_HANDLE;
+  }
+  if (persistent_vertex_memory_ != VK_NULL_HANDLE) {
+    vkFreeMemory(device_, persistent_vertex_memory_, nullptr);
+    persistent_vertex_memory_ = VK_NULL_HANDLE;
+  }
+  if (persistent_index_buffer_ != VK_NULL_HANDLE) {
+    vkDestroyBuffer(device_, persistent_index_buffer_, nullptr);
+    persistent_index_buffer_ = VK_NULL_HANDLE;
+  }
+  if (persistent_index_memory_ != VK_NULL_HANDLE) {
+    vkFreeMemory(device_, persistent_index_memory_, nullptr);
+    persistent_index_memory_ = VK_NULL_HANDLE;
+  }
+  if (persistent_readback_buffer_ != VK_NULL_HANDLE) {
+    vkDestroyBuffer(device_, persistent_readback_buffer_, nullptr);
+    persistent_readback_buffer_ = VK_NULL_HANDLE;
+  }
+  if (persistent_readback_memory_ != VK_NULL_HANDLE) {
+    vkFreeMemory(device_, persistent_readback_memory_, nullptr);
+    persistent_readback_memory_ = VK_NULL_HANDLE;
+  }
+  has_persistent_mesh_ = false;
+}
+
 static void TransitionImageLayout(VkCommandBuffer cmd, VkImage image,
                                   VkImageLayout old_layout, VkImageLayout new_layout,
                                   VkAccessFlags src_access, VkAccessFlags dst_access,
@@ -531,6 +604,135 @@ static void TransitionImageLayout(VkCommandBuffer cmd, VkImage image,
 
   vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1,
                        &barrier);
+}
+
+cv::Mat VulkanContext::RenderPose(const glm::mat4& mvp) {
+  if (!has_persistent_mesh_) {
+    throw std::runtime_error("UploadMesh must be called before RenderPose");
+  }
+
+  VkDeviceSize image_size = static_cast<VkDeviceSize>(width_) * height_ * 4;
+
+  VkCommandBufferAllocateInfo cmd_alloc{};
+  cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  cmd_alloc.commandPool = command_pool_;
+  cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  cmd_alloc.commandBufferCount = 1;
+
+  VkCommandBuffer cmd;
+  if (vkAllocateCommandBuffers(device_, &cmd_alloc, &cmd) != VK_SUCCESS) {
+    throw std::runtime_error("Failed to allocate command buffer");
+  }
+
+  VkCommandBufferBeginInfo begin_info{};
+  begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  vkBeginCommandBuffer(cmd, &begin_info);
+
+  TransitionImageLayout(cmd, color_image_, VK_IMAGE_LAYOUT_UNDEFINED,
+                        VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 0,
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT);
+
+  VkImageMemoryBarrier depth_barrier{};
+  depth_barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  depth_barrier.srcAccessMask = 0;
+  depth_barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  depth_barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  depth_barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  depth_barrier.image = depth_image_;
+  depth_barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+  depth_barrier.subresourceRange.levelCount = 1;
+  depth_barrier.subresourceRange.layerCount = 1;
+
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+                       VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT, 0, 0, nullptr, 0,
+                       nullptr, 1, &depth_barrier);
+
+  std::array<VkClearValue, 2> clear_values{};
+  clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+  clear_values[1].depthStencil = {1.0f, 0};
+
+  VkRenderPassBeginInfo rp_begin{};
+  rp_begin.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+  rp_begin.renderPass = render_pass_;
+  rp_begin.framebuffer = framebuffer_;
+  rp_begin.renderArea.offset = {0, 0};
+  rp_begin.renderArea.extent = {static_cast<uint32_t>(width_), static_cast<uint32_t>(height_)};
+  rp_begin.clearValueCount = static_cast<uint32_t>(clear_values.size());
+  rp_begin.pClearValues = clear_values.data();
+
+  vkCmdBeginRenderPass(cmd, &rp_begin, VK_SUBPASS_CONTENTS_INLINE);
+
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_);
+  vkCmdPushConstants(cmd, pipeline_layout_, VK_SHADER_STAGE_VERTEX_BIT, 0,
+                     sizeof(glm::mat4), &mvp);
+
+  VkDeviceSize offset = 0;
+  vkCmdBindVertexBuffers(cmd, 0, 1, &persistent_vertex_buffer_, &offset);
+  vkCmdBindIndexBuffer(cmd, persistent_index_buffer_, 0, VK_INDEX_TYPE_UINT32);
+
+  vkCmdDrawIndexed(cmd, persistent_index_count_, 1, 0, 0, 0);
+
+  vkCmdEndRenderPass(cmd);
+
+  TransitionImageLayout(cmd, color_image_, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+                        VK_ACCESS_TRANSFER_READ_BIT,
+                        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+                        VK_PIPELINE_STAGE_TRANSFER_BIT);
+
+  VkBufferImageCopy copy_region{};
+  copy_region.bufferOffset = 0;
+  copy_region.bufferRowLength = 0;
+  copy_region.bufferImageHeight = 0;
+  copy_region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  copy_region.imageSubresource.mipLevel = 0;
+  copy_region.imageSubresource.baseArrayLayer = 0;
+  copy_region.imageSubresource.layerCount = 1;
+  copy_region.imageOffset = {0, 0, 0};
+  copy_region.imageExtent = {static_cast<uint32_t>(width_), static_cast<uint32_t>(height_), 1};
+
+  vkCmdCopyImageToBuffer(cmd, color_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                         persistent_readback_buffer_, 1, &copy_region);
+
+  VkBufferMemoryBarrier readback_barrier{};
+  readback_barrier.sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+  readback_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+  readback_barrier.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+  readback_barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  readback_barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  readback_barrier.buffer = persistent_readback_buffer_;
+  readback_barrier.offset = 0;
+  readback_barrier.size = image_size;
+
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+                       VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1,
+                       &readback_barrier, 0, nullptr);
+
+  vkEndCommandBuffer(cmd);
+
+  VkSubmitInfo submit_info{};
+  submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submit_info.commandBufferCount = 1;
+  submit_info.pCommandBuffers = &cmd;
+
+  vkQueueSubmit(queue_, 1, &submit_info, fence_);
+  vkWaitForFences(device_, 1, &fence_, VK_TRUE, UINT64_MAX);
+  vkResetFences(device_, 1, &fence_);
+
+  void* data = nullptr;
+  vkMapMemory(device_, persistent_readback_memory_, 0, image_size, 0, &data);
+
+  cv::Mat mask = RgbaToMask(data);
+
+  vkUnmapMemory(device_, persistent_readback_memory_);
+
+  vkFreeCommandBuffers(device_, command_pool_, 1, &cmd);
+
+  return mask;
 }
 
 cv::Mat VulkanContext::Render(const float* vertices, size_t vertex_count,
@@ -685,15 +887,7 @@ cv::Mat VulkanContext::Render(const float* vertices, size_t vertex_count,
 
   vkMapMemory(device_, readback_memory, 0, image_size, 0, &data);
 
-  cv::Mat mask(height_, width_, CV_8UC1);
-  auto* src = static_cast<const uint8_t*>(data);
-  for (int row = 0; row < height_; ++row) {
-    auto* dst_row = mask.ptr<uint8_t>(row);
-    for (int col = 0; col < width_; ++col) {
-      int idx = (row * width_ + col) * 4;
-      dst_row[col] = (src[idx] > 127) ? 255 : 0;
-    }
-  }
+  cv::Mat mask = RgbaToMask(data);
 
   vkUnmapMemory(device_, readback_memory);
 

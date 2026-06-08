@@ -30,6 +30,9 @@ class MaskGenerator {
 
   cv::Mat Generate(const Mesh& mesh, const MeshPose& pose);
 
+  void SetMesh(const Mesh& mesh);
+  cv::Mat GeneratePose(const MeshPose& pose);
+
  private:
   class Impl;
   std::unique_ptr<Impl> impl_;

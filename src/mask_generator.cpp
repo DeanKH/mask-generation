@@ -30,6 +30,22 @@ class MaskGenerator::Impl {
                         mesh.indices().data(), mesh.indices().size(), mvp);
   }
 
+  void SetMesh(const Mesh& mesh) {
+    if (mesh.empty()) {
+      throw std::runtime_error("Mesh is empty");
+    }
+    ctx_->UploadMesh(mesh.vertices().data(), mesh.vertices().size() / 3,
+                     mesh.indices().data(), mesh.indices().size());
+  }
+
+  cv::Mat GeneratePose(const MeshPose& pose) {
+    glm::mat4 model = ComputeModelMatrix(pose);
+    glm::mat4 view = ComputeViewMatrix();
+    glm::mat4 proj = ComputeProjectionMatrix();
+    glm::mat4 mvp = proj * view * model;
+    return ctx_->RenderPose(mvp);
+  }
+
  private:
   glm::mat4 ComputeModelMatrix(const MeshPose& pose) const {
     glm::mat4 model(1.0f);
@@ -87,6 +103,14 @@ MaskGenerator& MaskGenerator::operator=(MaskGenerator&&) noexcept = default;
 
 cv::Mat MaskGenerator::Generate(const Mesh& mesh, const MeshPose& pose) {
   return impl_->Generate(mesh, pose);
+}
+
+void MaskGenerator::SetMesh(const Mesh& mesh) {
+  impl_->SetMesh(mesh);
+}
+
+cv::Mat MaskGenerator::GeneratePose(const MeshPose& pose) {
+  return impl_->GeneratePose(pose);
 }
 
 }  // namespace maskgen

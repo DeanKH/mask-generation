@@ -22,6 +22,11 @@ class VulkanContext {
   cv::Mat Render(const float* vertices, size_t vertex_count, const uint32_t* indices,
                  size_t index_count, const glm::mat4& mvp);
 
+  void UploadMesh(const float* vertices, size_t vertex_count, const uint32_t* indices,
+                  size_t index_count);
+  cv::Mat RenderPose(const glm::mat4& mvp);
+  void CleanupMeshBuffers();
+
  private:
   void CreateInstance();
   void PickPhysicalDevice();
@@ -44,6 +49,7 @@ class VulkanContext {
   VkImageView CreateImageView(VkImage image, VkFormat format,
                               VkImageAspectFlags aspect_flags);
   VkShaderModule CreateShaderModule(const std::vector<uint32_t>& code);
+  cv::Mat RgbaToMask(const void* rgba_data);
 
   VkInstance instance_ = VK_NULL_HANDLE;
   VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
@@ -67,6 +73,15 @@ class VulkanContext {
 
   std::vector<uint32_t> vert_spv_;
   std::vector<uint32_t> frag_spv_;
+
+  VkBuffer persistent_vertex_buffer_ = VK_NULL_HANDLE;
+  VkDeviceMemory persistent_vertex_memory_ = VK_NULL_HANDLE;
+  VkBuffer persistent_index_buffer_ = VK_NULL_HANDLE;
+  VkDeviceMemory persistent_index_memory_ = VK_NULL_HANDLE;
+  VkBuffer persistent_readback_buffer_ = VK_NULL_HANDLE;
+  VkDeviceMemory persistent_readback_memory_ = VK_NULL_HANDLE;
+  bool has_persistent_mesh_ = false;
+  uint32_t persistent_index_count_ = 0;
 };
 
 }  // namespace maskgen
