@@ -37,6 +37,17 @@ message(STATUS "Found OpenCASCADE: ${OpenCASCADE_INCLUDE_DIR}")
 add_subdirectory(src)
 add_subdirectory(app)
 
+include(FetchContent)
+FetchContent_Declare(
+    Catch2
+    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+    GIT_TAG        v3.8.0
+)
+FetchContent_MakeAvailable(Catch2)
+
+add_subdirectory(tests)
+enable_testing()
+
 include(GNUInstallDirs)
 
 install(DIRECTORY include/maskgen

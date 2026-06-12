@@ -86,8 +86,13 @@ mask-generation/
 ├── app/
 │   ├── CMakeLists.txt             CLI実行ファイル
 │   └── main.cpp                   コマンドラインプログラム
+├── tests/
+│   ├── CMakeLists.txt             ベンチマークビルド設定
+│   └── benchmark_maskgen.cpp      Catch2ベンチマーク
 └── model/
-    └── bun_zipper_res4.ply        サンプルメッシュ
+    ├── ad.step                    サンプルメッシュ（STEP）
+    ├── bun_zipper_res4.ply        サンプルメッシュ（PLY）
+    └── pen.step                   サンプルメッシュ（STEP）
 ```
 
 ## ライブラリ API
@@ -178,6 +183,8 @@ target_link_libraries(my_app PRIVATE maskgen)
 | OpenCV | 画像データ表現（cv::Mat）・PNG出力 | Apache 2.0 |
 | GLM | 行列・ベクトル演算 | MIT |
 | shaderc | GLSLからSPIR-Vへのランタイムコンパイル | Apache 2.0 |
+| nlohmann-json | JSONパース（カメラ情報読み込み） | MIT |
+| Catch2 | ベンチマーク・テストフレームワーク | BSL-1.0 |
 | Mesa (ANV) | Intel iGPU向けVulkanドライバ | MIT |
 
 ## 設計
@@ -214,6 +221,31 @@ MVP行列の渡し方はPush Constantsを使用。ディスクリプタセット
 - Formatter: clang-format（`.clang-format` 参照）
 - Linter: clang-tidy（`.clang-tidy` 参照）
 - C++17
+
+## ベンチマーク
+
+Catch2 のベンチマーク機能を使用し、`model/ad.step` に対して `MaskGenerator::Generate` の性能を測定します。カメラ情報は `./camera_info.json` を使用します。
+
+```bash
+# Docker内でビルド・実行
+docker compose build
+docker compose run --rm --entrypoint bash maskgen \
+  -c "cd /opt/maskgen-build/tests && ./benchmark_maskgen"
+```
+
+### ベンチマーク対象
+
+| ベンチマーク | 内容 |
+|-------------|------|
+| `Generate (upload + render)` | メッシュのアップロードとレンダリングを含む全体処理 |
+| `GeneratePose (render only)` | 事前に `SetMesh` 済みの状態で姿勢のみ変更してレンダリング |
+
+### 参考結果（Mesa llvmpipe / CPUフォールバック環境）
+
+```
+Generate (upload + render)      100 samples    41.2 ms mean
+GeneratePose (render only)      100 samples    41.4 ms mean
+```
 
 ## Docker
 
