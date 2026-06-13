@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstring>
+#include <iostream>
 #include <stdexcept>
 
 #include <shaderc/shaderc.hpp>
@@ -222,23 +223,52 @@ void VulkanContext::PickPhysicalDevice() {
   std::vector<VkPhysicalDevice> devices(device_count);
   vkEnumeratePhysicalDevices(instance_, &device_count, devices.data());
 
+  int best_score = -1;
   for (const auto& device : devices) {
+    VkPhysicalDeviceProperties props;
+    vkGetPhysicalDeviceProperties(device, &props);
+
     uint32_t queue_family_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, nullptr);
     std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count,
                                              queue_families.data());
 
+    bool has_graphics = false;
+    uint32_t graphics_family = 0;
     for (uint32_t i = 0; i < queue_family_count; ++i) {
       if (queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-        physical_device_ = device;
-        queue_family_index_ = i;
-        return;
+        has_graphics = true;
+        graphics_family = i;
+        break;
       }
+    }
+    if (!has_graphics) continue;
+
+    int score = 0;
+    if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
+      score = 1000;
+    else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
+      score = 100;
+    else if (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU)
+      score = 50;
+    else
+      score = 10;
+
+    if (score > best_score) {
+      best_score = score;
+      physical_device_ = device;
+      queue_family_index_ = graphics_family;
     }
   }
 
-  throw std::runtime_error("No suitable GPU found with graphics queue");
+  if (best_score < 0) {
+    throw std::runtime_error("No suitable GPU found with graphics queue");
+  }
+
+  VkPhysicalDeviceProperties picked_props;
+  vkGetPhysicalDeviceProperties(physical_device_, &picked_props);
+  std::cout << "[Vulkan] Selected device: " << picked_props.deviceName << "\n";
 }
 
 void VulkanContext::CreateLogicalDevice() {
