@@ -49,8 +49,6 @@ class VulkanContext {
   VkImageView CreateImageView(VkImage image, VkFormat format,
                               VkImageAspectFlags aspect_flags);
   VkShaderModule CreateShaderModule(const std::vector<uint32_t>& code);
-  cv::Mat RgbaToMask(const void* rgba_data);
-
   VkInstance instance_ = VK_NULL_HANDLE;
   VkPhysicalDevice physical_device_ = VK_NULL_HANDLE;
   VkDevice device_ = VK_NULL_HANDLE;

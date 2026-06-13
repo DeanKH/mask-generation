@@ -161,7 +161,7 @@ void VulkanContext::CreateCommandPool() {
 void VulkanContext::CreateRenderPass() {
   std::array<VkAttachmentDescription, 2> attachments{};
 
-  attachments[0].format = VK_FORMAT_R8G8B8A8_UNORM;
+  attachments[0].format = VK_FORMAT_R8_UNORM;
   attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
   attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
   attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -316,8 +316,7 @@ void VulkanContext::CreatePipeline() {
   depth_stencil.stencilTestEnable = VK_FALSE;
 
   VkPipelineColorBlendAttachmentState blend_attachment{};
-  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-                                    VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT;
   blend_attachment.blendEnable = VK_FALSE;
 
   VkPipelineColorBlendStateCreateInfo color_blending{};
@@ -448,11 +447,11 @@ VkImageView VulkanContext::CreateImageView(VkImage image, VkFormat format,
 }
 
 void VulkanContext::CreateOffscreenResources() {
-  CreateImage(VK_FORMAT_R8G8B8A8_UNORM,
+  CreateImage(VK_FORMAT_R8_UNORM,
               VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT,
               &color_image_, &color_image_memory_);
   color_image_view_ =
-      CreateImageView(color_image_, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
+      CreateImageView(color_image_, VK_FORMAT_R8_UNORM, VK_IMAGE_ASPECT_COLOR_BIT);
 
   CreateImage(VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
               &depth_image_, &depth_image_memory_);
@@ -514,26 +513,13 @@ void VulkanContext::CreateFence() {
   }
 }
 
-cv::Mat VulkanContext::RgbaToMask(const void* rgba_data) {
-  cv::Mat mask(height_, width_, CV_8UC1);
-  auto* src = static_cast<const uint8_t*>(rgba_data);
-  for (int row = 0; row < height_; ++row) {
-    auto* dst_row = mask.ptr<uint8_t>(row);
-    for (int col = 0; col < width_; ++col) {
-      int idx = (row * width_ + col) * 4;
-      dst_row[col] = (src[idx] > 127) ? 255 : 0;
-    }
-  }
-  return mask;
-}
-
 void VulkanContext::UploadMesh(const float* vertices, size_t vertex_count,
                                const uint32_t* indices, size_t index_count) {
   CleanupMeshBuffers();
 
   VkDeviceSize vertex_buffer_size = static_cast<VkDeviceSize>(vertex_count * 3) * sizeof(float);
   VkDeviceSize index_buffer_size = static_cast<VkDeviceSize>(index_count) * sizeof(uint32_t);
-  VkDeviceSize image_size = static_cast<VkDeviceSize>(width_) * height_ * 4;
+  VkDeviceSize image_size = static_cast<VkDeviceSize>(width_) * height_;
 
   CreateBuffer(vertex_buffer_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -611,7 +597,7 @@ cv::Mat VulkanContext::RenderPose(const glm::mat4& mvp) {
     throw std::runtime_error("UploadMesh must be called before RenderPose");
   }
 
-  VkDeviceSize image_size = static_cast<VkDeviceSize>(width_) * height_ * 4;
+  VkDeviceSize image_size = static_cast<VkDeviceSize>(width_) * height_;
 
   VkCommandBufferAllocateInfo cmd_alloc{};
   cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -726,7 +712,8 @@ cv::Mat VulkanContext::RenderPose(const glm::mat4& mvp) {
   void* data = nullptr;
   vkMapMemory(device_, persistent_readback_memory_, 0, image_size, 0, &data);
 
-  cv::Mat mask = RgbaToMask(data);
+  cv::Mat mask(height_, width_, CV_8UC1);
+  std::memcpy(mask.data, data, static_cast<size_t>(image_size));
 
   vkUnmapMemory(device_, persistent_readback_memory_);
 
@@ -741,7 +728,7 @@ cv::Mat VulkanContext::Render(const float* vertices, size_t vertex_count,
   VkDeviceSize vertex_buffer_size = static_cast<VkDeviceSize>(vertex_count * 3) * sizeof(float);
   VkDeviceSize index_buffer_size = static_cast<VkDeviceSize>(index_count) * sizeof(uint32_t);
   VkDeviceSize image_size =
-      static_cast<VkDeviceSize>(width_) * height_ * 4;
+      static_cast<VkDeviceSize>(width_) * height_;
 
   VkBuffer vertex_buffer = VK_NULL_HANDLE;
   VkDeviceMemory vertex_memory = VK_NULL_HANDLE;
@@ -887,7 +874,8 @@ cv::Mat VulkanContext::Render(const float* vertices, size_t vertex_count,
 
   vkMapMemory(device_, readback_memory, 0, image_size, 0, &data);
 
-  cv::Mat mask = RgbaToMask(data);
+  cv::Mat mask(height_, width_, CV_8UC1);
+  std::memcpy(mask.data, data, static_cast<size_t>(image_size));
 
   vkUnmapMemory(device_, readback_memory);
 
