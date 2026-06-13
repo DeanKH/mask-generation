@@ -46,6 +46,23 @@ class MaskGenerator::Impl {
     return ctx_->RenderPose(mvp);
   }
 
+  void SetCostInputs(const cv::Mat& dt_input, const cv::Mat& input_mask) {
+    ctx_->SetCostInputs(dt_input, input_mask);
+  }
+
+  maskgen::CostResult GeneratePoseWithCost(const MeshPose& pose, float scale_factor) {
+    glm::mat4 model = ComputeModelMatrix(pose);
+    glm::mat4 view = ComputeViewMatrix();
+    glm::mat4 proj = ComputeProjectionMatrix();
+    glm::mat4 mvp = proj * view * model;
+    maskgen::CostResult r;
+    ctx_->RenderPoseWithCost(mvp, scale_factor, r.chamfer_sum, r.rendered_area,
+                              r.intersection);
+    return r;
+  }
+
+  bool HasComputeCost() const { return ctx_->HasComputeCost(); }
+
  private:
   glm::mat4 ComputeModelMatrix(const MeshPose& pose) const {
     glm::mat4 model(1.0f);
@@ -111,6 +128,19 @@ void MaskGenerator::SetMesh(const Mesh& mesh) {
 
 cv::Mat MaskGenerator::GeneratePose(const MeshPose& pose) {
   return impl_->GeneratePose(pose);
+}
+
+void MaskGenerator::SetCostInputs(const cv::Mat& dt_input, const cv::Mat& input_mask) {
+  impl_->SetCostInputs(dt_input, input_mask);
+}
+
+maskgen::CostResult MaskGenerator::GeneratePoseWithCost(const MeshPose& pose,
+                                                         float scale_factor) {
+  return impl_->GeneratePoseWithCost(pose, scale_factor);
+}
+
+bool MaskGenerator::HasComputeCost() const {
+  return impl_->HasComputeCost();
 }
 
 }  // namespace maskgen

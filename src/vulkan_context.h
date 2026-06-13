@@ -27,6 +27,12 @@ class VulkanContext {
   cv::Mat RenderPose(const glm::mat4& mvp);
   void CleanupMeshBuffers();
 
+  void SetCostInputs(const cv::Mat& dt_input, const cv::Mat& input_mask);
+  void RenderPoseWithCost(const glm::mat4& mvp, float scale_factor,
+                          float& chamfer_sum, float& rendered_area,
+                          float& intersection);
+  bool HasComputeCost() const { return has_compute_cost_; }
+
  private:
   void CreateInstance();
   void PickPhysicalDevice();
@@ -39,6 +45,9 @@ class VulkanContext {
   void CreateOffscreenResources();
   void CreateFence();
   void CleanupOffscreenResources();
+
+  void CreateComputeResources();
+  void CleanupComputeResources();
 
   uint32_t FindMemoryType(uint32_t type_filter, VkMemoryPropertyFlags properties);
   void CreateBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
@@ -80,6 +89,31 @@ class VulkanContext {
   VkDeviceMemory persistent_readback_memory_ = VK_NULL_HANDLE;
   bool has_persistent_mesh_ = false;
   uint32_t persistent_index_count_ = 0;
+
+  bool has_compute_cost_ = false;
+
+  std::vector<uint32_t> cost_compute_spv_;
+  std::vector<uint32_t> cost_reduce_spv_;
+
+  VkDescriptorSetLayout compute_desc_layout_ = VK_NULL_HANDLE;
+  VkDescriptorPool compute_desc_pool_ = VK_NULL_HANDLE;
+  VkDescriptorSet compute_desc_set_ = VK_NULL_HANDLE;
+  VkPipelineLayout compute_pipeline_layout_ = VK_NULL_HANDLE;
+
+  VkPipeline cost_compute_pipeline_ = VK_NULL_HANDLE;
+  VkPipeline cost_reduce_pipeline_ = VK_NULL_HANDLE;
+
+  VkBuffer dt_input_buffer_ = VK_NULL_HANDLE;
+  VkDeviceMemory dt_input_buffer_memory_ = VK_NULL_HANDLE;
+  VkBuffer input_mask_buffer_ = VK_NULL_HANDLE;
+  VkDeviceMemory input_mask_buffer_memory_ = VK_NULL_HANDLE;
+
+  VkBuffer cost_output_buffer_ = VK_NULL_HANDLE;
+  VkDeviceMemory cost_output_memory_ = VK_NULL_HANDLE;
+
+  VkBuffer partial_buffer_ = VK_NULL_HANDLE;
+  VkDeviceMemory partial_buffer_memory_ = VK_NULL_HANDLE;
+  int num_partial_groups_ = 0;
 };
 
 }  // namespace maskgen
